@@ -1,6 +1,6 @@
 {
   "name": "Leverage Studios",
-  "description": "Lightweight, open-source AI-native desktop coding studio designed for agent-assisted coding, multi-agent orchestration, and high-scale WASM plugin ecosystem.",
+  "description": "An open-source, local-first AI agent desktop studio built with Tauri 2.0, React 19, and TypeScript. Features multi-agent DAG orchestration and Bring Your Own Key (BYOK) local security.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

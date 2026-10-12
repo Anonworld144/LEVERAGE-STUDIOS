@@ -9,3 +9,4 @@ export * from './IPCBridge.ts';
 export * from './ToolRegistry.ts';
 export * from './BaseAgent.ts';
 export * from './AgentManager.ts';
+export * from './settingsStore.ts';

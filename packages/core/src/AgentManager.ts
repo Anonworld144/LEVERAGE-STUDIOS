@@ -89,25 +89,40 @@ export class AgentManager {
     });
 
     const completedNodeIds = new Set<string>();
+    const failedNodeIds = new Set<string>();
 
     try {
-      while (completedNodeIds.size < wf.nodes.length) {
-        // Find nodes ready to run (all dependencies completed)
+      while (completedNodeIds.size + failedNodeIds.size < wf.nodes.length) {
+        // Cascade 'skipped' status to pending nodes whose dependencies failed
+        for (const node of wf.nodes) {
+          if (node.status === 'pending') {
+            const hasFailedDep = node.dependencies.some((dep) => failedNodeIds.has(dep));
+            if (hasFailedDep) {
+              node.status = 'skipped';
+              node.errorMessage = 'Skipped because upstream dependency failed or was aborted.';
+              failedNodeIds.add(node.id);
+            }
+          }
+        }
+
+        // Find nodes ready to run (all dependencies completed successfully)
         const readyNodes = wf.nodes.filter(
           (n) => n.status === 'pending' && n.dependencies.every((dep) => completedNodeIds.has(dep))
         );
 
         if (readyNodes.length === 0) {
-          // If nodes remain pending but none are ready, cycle or deadlock
+          // If nodes remain pending and cannot proceed, mark remaining as failed
           const pendingRemaining = wf.nodes.filter((n) => n.status === 'pending');
-          if (pendingRemaining.length > 0) {
-            throw new Error('Cyclic dependency or unresolvable edge in agent DAG workflow');
+          for (const remaining of pendingRemaining) {
+            remaining.status = 'failed';
+            remaining.errorMessage = 'Unresolved dependency or pipeline stalled.';
+            failedNodeIds.add(remaining.id);
           }
           break;
         }
 
-        // Execute ready nodes concurrently
-        await Promise.all(
+        // Execute ready nodes concurrently using Promise.allSettled for complete error isolation
+        const results = await Promise.allSettled(
           readyNodes.map(async (node) => {
             node.status = 'running';
             node.progress = 25;
@@ -116,7 +131,8 @@ export class AgentManager {
             const agent = this.agents.get(node.agentId);
             if (!agent) {
               node.status = 'failed';
-              node.errorMessage = `Agent ${node.agentId} not registered`;
+              node.errorMessage = `Agent ${node.agentId} is not registered in runtime.`;
+              failedNodeIds.add(node.id);
               this.notify();
               return;
             }
@@ -135,22 +151,33 @@ export class AgentManager {
                 }
               } else {
                 node.status = 'failed';
-                node.errorMessage = res.result;
+                node.errorMessage = res.result || 'Agent execution failed.';
+                failedNodeIds.add(node.id);
               }
             } catch (err: any) {
               node.status = 'failed';
-              node.errorMessage = err.message;
+              node.errorMessage = err?.message || String(err);
+              failedNodeIds.add(node.id);
+            } finally {
+              this.notify();
             }
-            this.notify();
           })
         );
+
+        // Check if any unexpected rejection occurred
+        for (const res of results) {
+          if (res.status === 'rejected') {
+            console.error('[AgentManager] Unhandled node execution rejection:', res.reason);
+          }
+        }
       }
 
-      const allSuccess = wf.nodes.every((n) => n.status === 'completed');
-      wf.status = allSuccess ? 'completed' : 'failed';
+      const hasFailures = wf.nodes.some((n) => n.status === 'failed');
+      wf.status = hasFailures ? 'failed' : 'completed';
       wf.completedAt = Date.now();
     } catch (err: any) {
       wf.status = 'failed';
+      console.error('[AgentManager] Workflow fatal error:', err);
     } finally {
       this.notify();
     }

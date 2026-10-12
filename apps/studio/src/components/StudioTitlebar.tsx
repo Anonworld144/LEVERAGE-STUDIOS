@@ -15,6 +15,7 @@ import {
   Sparkles,
   Cpu,
   Layers,
+  Settings,
 } from 'lucide-react';
 
 interface StudioTitlebarProps {
@@ -23,6 +24,8 @@ interface StudioTitlebarProps {
   workspaceName: string;
   activeBranch: string;
   agentStatus: string;
+  onOpenSettings: () => void;
+  hasConfiguredKey?: boolean;
 }
 
 export const StudioTitlebar: React.FC<StudioTitlebarProps> = ({
@@ -31,6 +34,8 @@ export const StudioTitlebar: React.FC<StudioTitlebarProps> = ({
   workspaceName,
   activeBranch,
   agentStatus,
+  onOpenSettings,
+  hasConfiguredKey = false,
 }) => {
   return (
     <header className="flex h-10 w-full items-center justify-between border-b border-[#1a1e29] bg-[#0c0e14] px-3 select-none text-xs">
@@ -97,9 +102,24 @@ export const StudioTitlebar: React.FC<StudioTitlebarProps> = ({
           </span>
         </div>
 
+        {/* BYOK Settings Trigger */}
+        <button
+          onClick={onOpenSettings}
+          className="flex items-center gap-1.5 rounded-lg bg-[#151926] hover:bg-[#1d2336] px-2.5 py-1 text-[11px] font-medium text-neutral-300 hover:text-white border border-[#232a3b] transition-colors"
+          title="Configure API Keys (BYOK)"
+        >
+          <Settings className="h-3.5 w-3.5 text-indigo-400" />
+          <span>Settings</span>
+          {hasConfiguredKey ? (
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" title="API Key Active" />
+          ) : (
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" title="API Key Missing" />
+          )}
+        </button>
+
         <button
           onClick={() => alert('Command Palette (Cmd+K / Ctrl+K)\n- Spawn Agent\n- Run DAG Pipeline\n- Install WASM Plugin\n- Format Document')}
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-white bg-[#11141d] hover:bg-[#1a1e29] px-2.5 py-1 rounded border border-[#1a1e29] transition-colors"
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-white bg-[#11141d] hover:bg-[#1a1e29] px-2 py-1 rounded border border-[#1a1e29] transition-colors"
         >
           <Search className="h-3 w-3" />
           <span className="text-[10px] font-mono">⌘K</span>

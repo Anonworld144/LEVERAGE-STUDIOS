@@ -526,7 +526,15 @@ pub fn execute_sandboxed(&self, payload: WasmExecutionPayload) -> WasmExecutionR
 
                 {/* Execution Telemetry Result */}
                 <div className="rounded-xl border border-[#1e2330] bg-[#11141d] p-5 flex flex-col">
-                  <h3 className="text-sm font-semibold text-white mb-3">Runtime Sandbox Telemetry</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-white">Runtime Sandbox Telemetry</h3>
+                    {testResult?.isRealWasmExecution && (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        Native WASM Engine
+                      </span>
+                    )}
+                  </div>
 
                   {testResult ? (
                     <div className="space-y-4 flex-1 flex flex-col">

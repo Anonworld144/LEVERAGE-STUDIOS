@@ -1,43 +1,97 @@
-# Leverage Studios
+# LEVERAGE-STUDIOS: Local-First AI Agent Coding Studio
 
-> A lightweight, open-source, AI-native desktop coding studio designed for agent-assisted coding, multi-agent orchestration, and a high-scale 1,000+ WebAssembly plugin ecosystem.
+> An open-source, local-first AI agent desktop studio built with Tauri 2.0, React 19, and TypeScript. Features multi-agent DAG orchestration and Bring Your Own Key (BYOK) local security.
 
 [![CI/CD Release](https://github.com/leverage-studios/leverage-studios/actions/workflows/build-release.yml/badge.svg)](https://github.com/leverage-studios/leverage-studios/actions)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Platform: Windows & Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-brightgreen.svg)]()
 [![Tauri: 2.0](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app/)
 [![Monaco Editor](https://img.shields.io/badge/Editor-Monaco-blue.svg)](https://microsoft.github.io/monaco-editor/)
+[![Privacy: BYOK Local-First](https://img.shields.io/badge/Privacy-100%25%20Local%20BYOK-success.svg)]()
 
 ---
 
-## 📌 Project Overview
+## 🔒 Bring Your Own Key (BYOK) Privacy Architecture
 
-**Leverage Studios** is an AI-first IDE built from the ground up for collaborative multi-agent workflows and high-concurrency plugin execution. Instead of treating AI as a chat sidebar, Leverage Studios treats agents as first-class asynchronous pipeline workers that communicate over typed IPC, synthesize code into streaming diffs, and execute tools within isolated WebAssembly sandboxes.
+Unlike traditional AI coding assistants that route your proprietary code, prompts, and credentials through third-party cloud intermediaries, **Leverage Studios operates on a strict local-first, zero-egress BYOK model**:
 
-### Key Highlights
-- **Cross-Platform Desktop Shell**: Built with **Tauri 2.0 (Rust)** + **React 19 (TypeScript)** + **Vite 8** for minimal memory footprint and fast startup.
-- **Embedded Monaco Editor**: Full Monaco code editor integration (`@monaco-editor/react`) featuring unified and side-by-side streaming diff reviews, syntax verification, and inline ghost-text AI autocomplete.
-- **Multi-Agent DAG Orchestrator**: Directed Acyclic Graph (DAG) workflow engine allowing specialized agents (*Architect, Coder, Reviewer, Security Auditor, Debugger*) to run in dependency order with real-time progress.
-- **1,000+ WASM Plugin Ecosystem**: Extism- and Wasmtime-powered sandboxed execution with linear memory caps (16MB–64MB), instruction gas metering, and zero-trust capability permissions (`FileSystem:WorkspaceOnly`, `Network:HTTP`, `ProcessExecution:CLI`).
-- **Cross-Platform IPC Bridge**: Bidirectional communication channels connecting the Rust core with Node.js worker pools and Python agent environments.
+- **Local Secret Storage**: All API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are stored strictly on your local machine using client-side secure storage.
+- **Direct Model Connections**: The desktop client communicates **directly and point-to-point** with your chosen AI provider endpoints (Google Gemini, OpenAI, Anthropic). No intermediary servers ever receive, inspect, or log your keys or source code.
+- **Audited Sandboxing**: Agent execution contexts are strictly isolated from system environment variables; ambient OS secrets are never leaked to tool runners or plugin handlers.
 
 ---
 
-## 🏗️ Monorepo Architecture
+## 🏛️ System Architecture Diagram
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          LEVERAGE STUDIOS DESKTOP                         │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   ┌───────────────────────────────────────────────────────────────────┐   │
+│   │                     UI LAYER (React 19 + Vite)                    │   │
+│   │   • Monaco Code Editor (Side-by-Side Diff & Inline Ghost Text)    │   │
+│   │   • Visual DAG Multi-Agent Workflow Canvas                        │   │
+│   │   • Real-Time Agent Console & 1,000+ Plugin Manager               │   │
+│   │   • BYOK Settings Modal with Connection Verification              │   │
+│   └─────────────────┬───────────────────────────────▲─────────────────┘   │
+│                     │ Typed IPC                     │ Events & Telemetry  │
+│                     ▼                               │                     │
+│   ┌─────────────────────────────────────────────────┴─────────────────┐   │
+│   │                 DESKTOP BACKEND (Tauri 2.0 Rust Core)             │   │
+│   │   • Native Window Management (Windows .msi / Linux .AppImage)     │   │
+│   │   • Process Supervisor (Python & Node.js Subprocess Workers)      │   │
+│   │   • Extism / Wasmtime Sandboxed Plugin Execution Engine           │   │
+│   └─────────────────┬─────────────────────────────────────────────────┘   │
+│                     │                                                     │
+│   ┌─────────────────▼─────────────────┐   ┌───────────────────────────┐   │
+│   │        LOCAL SECURE STORE         │   │     WASM PLUGIN RUNNER    │   │
+│   │   • GEMINI_API_KEY                │   │   • Linear Memory Bounds  │   │
+│   │   • OPENAI_API_KEY                │   │   • Gas Instruction Meter │   │
+│   │   • ANTHROPIC_API_KEY             │   │   • Zero-Trust Scopes     │   │
+│   └─────────────────┬─────────────────┘   └───────────────────────────┘   │
+│                     │                                                     │
+└─────────────────────┼─────────────────────────────────────────────────────┘
+                      │ Direct, TLS-Encrypted Egress (No Proxy)
+                      ▼
+       ┌───────────────────────────────┐
+       │     DIRECT LLM PROVIDERS      │
+       │  • Google Gemini 2.5 / 3.x    │
+       │  • OpenAI (GPT-4o)            │
+       │  • Anthropic (Claude 3.7)     │
+       └───────────────────────────────┘
+```
+
+---
+
+## ⚡ Feature Matrix
+
+| Feature | Capability | Description |
+| :--- | :--- | :--- |
+| **BYOK Security** | 100% Local-First | Client-managed keys, zero telemetry proxy, password visibility toggles, and live connection verification. |
+| **Multi-Agent DAG** | Topological Orchestration | Visual node graph chaining specialized agents (*Architect, Coder, Reviewer, Security Auditor, Debugger*) with clean error isolation. |
+| **Streaming Diff Previews** | Real-Time Unified Hunks | Monaco-powered side-by-side diff previews with one-click Accept/Reject patch controls. |
+| **WASM Plugin Sandbox** | 1,000+ Dynamic Plugins | Extism/Wasmtime sandboxing with 16MB–64MB memory caps, instruction gas metering, and capability permission auditing. |
+| **AST Code Parsing** | Multi-Language Analysis | Structural analysis for TypeScript, JavaScript, Rust, and Python to extract symbols, classes, and calculate complexity scores. |
+| **Cross-Platform Native Shell** | Windows & Linux | Lightweight Tauri 2.0 binary with minimal memory footprint compared to Electron. |
+
+---
+
+## 🏗️ Monorepo Layout
 
 Managed via `pnpm` workspaces:
 
 ```
 leverage-studios/
 ├── apps/
-│   ├── studio/                 # Main Tauri + React desktop UI
+│   ├── studio/                 # Tauri 2.0 + React desktop IDE UI
 │   └── docs/                   # Developer documentation & interactive WASM testbed
 ├── packages/
-│   ├── core/                   # Agent runtime, BaseAgent, DAG planner, AST parser, DiffEngine
+│   ├── core/                   # BaseAgent, AgentManager, SettingsStore, ASTParser, DiffEngine
 │   └── plugin-sdk/             # WASM sandbox runner (Extism/Wasmtime), plugin registry, security audit
 ├── src-tauri/                  # Rust 2.0 desktop shell, IPC commands, and native WASM execution
 ├── .github/workflows/
-│   └── build-release.yml       # Windows (.exe/.msi) and Linux (.AppImage/.deb) matrix build
+│   └── build-release.yml       # Windows (.msi) and Linux (.AppImage/.deb) matrix build
 └── pnpm-workspace.yaml
 ```
 
@@ -45,22 +99,18 @@ leverage-studios/
 
 ## 📋 System Requirements
 
-### Hardware Requirements
-- **CPU**: 64-bit Dual-Core x86_64 processor (Quad-Core recommended).
-- **RAM**: Minimum 4 GB RAM (8 GB recommended for compiling Rust & running multi-agent workflows).
-- **Disk**: 500 MB free space for the compiled binary (2 GB during build with Rust toolchain).
+### Hardware
+- **CPU:** 64-bit Dual-Core x86_64 processor (Quad-Core recommended).
+- **RAM:** Minimum 4 GB RAM (8 GB recommended for compiling Rust & running multi-agent workflows).
+- **Disk:** 500 MB free space for the compiled binary (2 GB during build with Rust toolchain).
 
-### Software & Toolchain Prerequisites
+### Software Toolchains
+- **Node.js:** `>= 20.x LTS`
+- **pnpm:** `>= 9.x`
+- **Rust Toolchain:** `>= 1.80.0 Stable` (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- **WASM Target:** `rustup target add wasm32-wasip1`
 
-| Dependency | Minimum Version | Installation / Notes |
-| :--- | :--- | :--- |
-| **Node.js** | `>= 20.x LTS` | [nodejs.org](https://nodejs.org/) |
-| **pnpm** | `>= 9.x` | `corepack enable && corepack prepare pnpm@latest --activate` |
-| **Rust Toolchain** | `>= 1.80.0 Stable` | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| **Rust WASM Target** | `wasm32-wasip1` | Required for compiling plugins: `rustup target add wasm32-wasip1` |
-
-#### Linux-Specific System Libraries (Ubuntu / Debian)
-Tauri 2.0 on Linux requires WebKit and GTK 3 development headers:
+#### Linux System Packages (Ubuntu / Debian)
 ```bash
 sudo apt-get update && sudo apt-get install -y \
   libwebkit2gtk-4.1-dev \
@@ -77,97 +127,54 @@ sudo apt-get update && sudo apt-get install -y \
   squashfs-tools
 ```
 
-#### Windows-Specific Prerequisites
-- **Microsoft C++ Build Tools** (via [Visual Studio Installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/)): Select "Desktop development with C++".
-- **WebView2**: Pre-installed on Windows 10 and 11.
+#### Windows Prerequisites
+- **Visual Studio C++ Build Tools** (Select "Desktop development with C++")
+- **Microsoft Edge WebView2 Runtime** (Standard on Windows 10/11)
 
 ---
 
-## 🚀 Installation & Local Development
+## 🚀 Quickstart Installation Guide
 
-### 1. Clone the Repository
+### 1. Clone Repository
 ```bash
 git clone https://github.com/leverage-studios/leverage-studios.git
 cd leverage-studios
 ```
 
-### 2. Install Node Dependencies
+### 2. Install Dependencies
 ```bash
 pnpm install
 ```
 
-### 3. Run in Web / Preview Mode (Fast Dev Loop)
-To work on the frontend, Monaco editor, DAG orchestrator, or docs portal directly in the browser:
+### 3. Run in Web Development Mode (Fast UI & Agent Testing)
 ```bash
 pnpm dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
-### 4. Run the Full Desktop Application (Tauri 2.0 + Rust Core)
-To run the native desktop shell with full Rust IPC bridges:
+### 4. Run the Full Desktop Application (Tauri 2.0 + Rust Engine)
 ```bash
 pnpm tauri dev
 ```
 
+### 5. Configure Your API Key
+1. Click the **Settings (⚙️)** button in the top navbar.
+2. Enter your **Google Gemini**, **OpenAI**, or **Anthropic** API key.
+3. Click **Test Connection** to verify validity.
+4. Click **Save Settings**. Your agents will now execute live code generation directly!
+
 ---
 
-## 📦 Building Standalone Release Binaries
+## 📦 Building Production Release Binaries
 
-### Automated Build via CLI
-
-To compile self-contained native bundles for your current operating system:
 ```bash
-# Builds frontend assets and native Tauri bundle
+# Builds optimized web assets and native Tauri installer packages
 pnpm tauri build
 ```
 
-The resulting binaries will be placed in:
-- **Windows**: `src-tauri/target/release/bundle/msi/` (.msi) and `src-tauri/target/release/bundle/nsis/` (.exe)
-- **Linux**: `src-tauri/target/release/bundle/appimage/` (.AppImage) and `src-tauri/target/release/bundle/deb/` (.deb)
-
-### Cross-Platform CI/CD via GitHub Actions
-A production GitHub Actions matrix workflow is provided in `.github/workflows/build-release.yml`. When you push a tag (e.g. `v0.1.0`), the workflow automatically builds, tests, packages, and attaches releases for both `windows-latest` and `ubuntu-22.04`.
-
----
-
-## 🧩 Developing a WASM Plugin
-
-Plugins are compiled into WebAssembly using the Extism PDK:
-
-1. Create a Rust library with `crate-type = ["cdylib"]`:
-   ```toml
-   [dependencies]
-   extism-pdk = "1.0.0"
-   serde = { version = "1.0", features = ["derive"] }
-   serde_json = "1.0"
-   ```
-
-2. Implement an exported function:
-   ```rust
-   use extism_pdk::*;
-   use serde::{Deserialize, Serialize};
-
-   #[derive(Deserialize)]
-   struct Input { code: String }
-
-   #[derive(Serialize)]
-   struct Output { formatted: String, changed: bool }
-
-   #[plugin_fn]
-   pub fn format_code(Json(input): Json<Input>) -> FnResult<Json<Output>> {
-       Ok(Json(Output {
-           formatted: input.code.trim().to_string(),
-           changed: true,
-       }))
-   }
-   ```
-
-3. Compile to WASI:
-   ```bash
-   cargo build --target wasm32-wasip1 --release
-   ```
-
-4. Declare permissions in `plugin.json` and load into the Leverage Studios Plugin Manager.
+Generated bundles will be placed in:
+- **Windows:** `src-tauri/target/release/bundle/msi/*.msi` and `.../nsis/*.exe`
+- **Linux:** `src-tauri/target/release/bundle/appimage/*.AppImage` and `.../deb/*.deb`
 
 ---
 

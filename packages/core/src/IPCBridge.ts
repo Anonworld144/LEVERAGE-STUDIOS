@@ -2,9 +2,26 @@
  * Leverage Studios - Cross-Platform IPC Bridge
  * Provides bidirectional communication channels between Tauri 2.0 (Rust Core),
  * Node.js worker pools, Python agent runtimes, and the React desktop frontend.
+ * Strictly validated with Zod schemas to sanitize all incoming channels and payloads.
  */
 
-import { IPCMessage, IPCResponse, IPCRuntimeTarget } from './types.ts';
+import { z } from 'zod';
+import { IPCMessage, IPCRuntimeTarget } from './types.ts';
+
+// Schema for channel validation
+const IPCChannelSchema = z
+  .string()
+  .min(1, 'IPC Channel cannot be empty')
+  .max(128, 'IPC Channel name exceeds maximum allowed length')
+  .regex(/^[a-zA-Z0-9_:-]+$/, 'IPC Channel contains disallowed characters');
+
+const IPCTargetSchema = z.enum(['tauri-rust', 'node-worker', 'python-runtime', 'wasm-sandbox']);
+
+const IPCSendRequestSchema = z.object({
+  channel: IPCChannelSchema,
+  target: IPCTargetSchema,
+  timeoutMs: z.number().int().min(100).max(60000).default(10000),
+});
 
 type MessageHandler = (message: IPCMessage) => void;
 
@@ -40,18 +57,21 @@ export class IPCBridge {
    * Subscribe to messages on an IPC channel
    */
   public subscribe(channel: string, handler: MessageHandler): () => void {
-    if (!this.handlers.has(channel)) {
-      this.handlers.set(channel, new Set());
+    const validatedChannel = IPCChannelSchema.parse(channel);
+
+    if (!this.handlers.has(validatedChannel)) {
+      this.handlers.set(validatedChannel, new Set());
     }
-    this.handlers.get(channel)!.add(handler);
+    this.handlers.get(validatedChannel)!.add(handler);
 
     return () => {
-      this.handlers.get(channel)?.delete(handler);
+      this.handlers.get(validatedChannel)?.delete(handler);
     };
   }
 
   /**
    * Send an IPC message to a target runtime (Rust, Node, Python, WASM)
+   * Strictly sanitized via Zod.
    */
   public async send<T = any, R = any>(
     channel: string,
@@ -59,13 +79,27 @@ export class IPCBridge {
     target: IPCRuntimeTarget = 'tauri-rust',
     timeoutMs: number = 10000
   ): Promise<R> {
+    // 1. Zod schema validation
+    const validation = IPCSendRequestSchema.safeParse({ channel, target, timeoutMs });
+    if (!validation.success) {
+      throw new Error(`IPC validation error: ${validation.error.issues.map((i) => i.message).join(', ')}`);
+    }
+
+    // Ensure payload is JSON-serializable
+    let sanitizedPayload = payload;
+    try {
+      sanitizedPayload = JSON.parse(JSON.stringify(payload ?? {}));
+    } catch {
+      throw new Error('IPC Payload must be JSON-serializable');
+    }
+
     const messageId = `ipc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const message: IPCMessage<T> = {
       id: messageId,
-      channel,
-      sender: 'tauri-rust', // or frontend
-      target,
-      payload,
+      channel: validation.data.channel,
+      sender: 'tauri-rust',
+      target: validation.data.target,
+      payload: sanitizedPayload,
       timestamp: Date.now(),
     };
 
@@ -77,10 +111,10 @@ export class IPCBridge {
     // In actual Tauri environment, invoke via __TAURI__.core.invoke
     if (this.isTauriEnvironment && typeof (window as any).__TAURI__?.core?.invoke === 'function') {
       try {
-        const result = await (window as any).__TAURI__.core.invoke(channel, payload);
+        const result = await (window as any).__TAURI__.core.invoke(validation.data.channel, sanitizedPayload);
         return result as R;
       } catch (err) {
-        throw new Error(`Tauri IPC failed on channel ${channel}: ${err}`);
+        throw new Error(`Tauri IPC failed on channel ${validation.data.channel}: ${err}`);
       }
     }
 
@@ -88,7 +122,7 @@ export class IPCBridge {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(messageId);
-        resolve(this.simulateResponse(channel, payload) as R);
+        resolve(this.simulateResponse(validation.data.channel, sanitizedPayload) as R);
       }, 80);
 
       this.pendingRequests.set(messageId, { resolve, reject, timeout });
@@ -99,13 +133,19 @@ export class IPCBridge {
    * Broadcast an event to all local subscribers
    */
   public broadcast(message: IPCMessage): void {
-    const channelHandlers = this.handlers.get(message.channel);
+    const channelValidation = IPCChannelSchema.safeParse(message.channel);
+    if (!channelValidation.success) {
+      console.warn('[IPCBridge] Discarding message with invalid channel:', message.channel);
+      return;
+    }
+
+    const channelHandlers = this.handlers.get(channelValidation.data);
     if (channelHandlers) {
       for (const handler of channelHandlers) {
         try {
           handler(message);
         } catch (err) {
-          console.error(`Error in IPC handler for channel ${message.channel}:`, err);
+          console.error(`Error in IPC handler for channel ${channelValidation.data}:`, err);
         }
       }
     }
@@ -131,7 +171,7 @@ export class IPCBridge {
         return { status: 'success', memoryUsedKb: 340, gasConsumed: 1200 };
       case 'tauri:system:info':
         return {
-          os: navigator.userAgent.includes('Windows') ? 'windows' : 'linux',
+          os: typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows') ? 'windows' : 'linux',
           arch: 'x86_64',
           tauriVersion: '2.0.4',
           rustEngine: 'rustc 1.84.0',

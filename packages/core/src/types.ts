@@ -61,11 +61,23 @@ export interface AgentToolDefinition {
   handler: (args: Record<string, any>, context: AgentExecutionContext) => Promise<any>;
 }
 
+export interface SafeRuntimeConfig {
+  readonly workspaceRoot: string;
+  readonly platform: 'windows' | 'linux' | 'darwin' | 'web';
+  readonly maxConcurrency: number;
+}
+
 export interface AgentExecutionContext {
   agentId: string;
   workspaceRoot: string;
   activeFilePath?: string;
-  environmentVariables: Record<string, string>;
+  /**
+   * Sanitized non-sensitive runtime configurations only.
+   * Ambient OS environment variables and raw API secrets (e.g. GEMINI_API_KEY,
+   * OPENAI_API_KEY) are strictly isolated and never exposed in this object.
+   */
+  environmentVariables: Readonly<Record<string, string>>;
+  runtimeConfig?: SafeRuntimeConfig;
   emitLog: (level: 'info' | 'warn' | 'error' | 'debug', message: string, payload?: any) => void;
   emitDiff: (diff: StreamingDiff) => void;
   invokeIpc: (channel: string, payload: any) => Promise<any>;

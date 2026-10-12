@@ -8,8 +8,9 @@ import { FileExplorer } from './components/FileExplorer.tsx';
 import { MonacoEditorWrapper } from './components/MonacoEditorWrapper.tsx';
 import { AgentControlPanel } from './components/AgentControlPanel.tsx';
 import { WorkspaceFile, RightPanelTab } from './types.ts';
-import { StreamingDiff, AgentManager, DiffEngine } from '@leverage/core';
+import { StreamingDiff, AgentManager, DiffEngine, SettingsStore } from '@leverage/core';
 import { DocsPortal } from '@docs/DocsPortal.tsx';
+import { SettingsModal } from './components/SettingsModal.tsx';
 
 const INITIAL_WORKSPACE_FILES: WorkspaceFile[] = [
   {
@@ -122,6 +123,19 @@ export const StudioApp: React.FC = () => {
   const [pendingDiff, setPendingDiff] = useState<StreamingDiff | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('dag');
   const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [hasConfiguredKey, setHasConfiguredKey] = useState<boolean>(() => {
+    const store = SettingsStore.getInstance();
+    return store.hasKey('gemini') || store.hasKey('openai') || store.hasKey('anthropic');
+  });
+
+  React.useEffect(() => {
+    const unsub = SettingsStore.getInstance().subscribe(() => {
+      const store = SettingsStore.getInstance();
+      setHasConfiguredKey(store.hasKey('gemini') || store.hasKey('openai') || store.hasKey('anthropic'));
+    });
+    return unsub;
+  }, []);
 
   const activeFile = files.find((f) => f.id === activeFileId) || files[0];
 
@@ -224,6 +238,8 @@ export const StudioApp: React.FC = () => {
         workspaceName="leverage-studios"
         activeBranch="main"
         agentStatus={isAgentRunning ? 'Running' : 'Ready'}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        hasConfiguredKey={hasConfiguredKey}
       />
 
       {/* Main Workspace Body */}
@@ -269,6 +285,9 @@ export const StudioApp: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Local BYOK Settings Modal */}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };
