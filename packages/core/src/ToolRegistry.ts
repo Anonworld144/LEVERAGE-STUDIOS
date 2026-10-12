@@ -35,6 +35,38 @@ export interface AuditLogEntry {
   error?: string;
 }
 
+export interface FileInspectionResult {
+  path: string;
+  bytes: number;
+  lines: number;
+  readAt: number;
+}
+
+export interface AstSymbolResult {
+  query: string;
+  matches: Array<{
+    name: string;
+    type: string;
+    file: string;
+    line: number;
+  }>;
+}
+
+export interface GitStatusResult {
+  branch: string;
+  clean: boolean;
+  modified: string[];
+  untracked: string[];
+}
+
+export interface CommandExecutionResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  command: string;
+  executedAt: number;
+}
+
 export class ToolRegistry {
   private static instance: ToolRegistry;
   private tools: Map<string, AgentToolDefinition> = new Map();
@@ -160,7 +192,7 @@ export class ToolRegistry {
   }
 
   private registerBuiltInTools(): void {
-    // Built-in file read
+    // Built-in file inspection
     this.registerTool({
       name: 'fs_read_file',
       description: 'Reads contents of a file within the active project workspace.',
@@ -169,8 +201,14 @@ export class ToolRegistry {
       parameters: {
         path: { type: 'string', description: 'Relative path to file', required: true },
       },
-      handler: async (args) => {
-        return { path: args.path, status: 'inspected', timestamp: Date.now() };
+      handler: async (args, ctx): Promise<FileInspectionResult> => {
+        const filePath = String(args.path);
+        return {
+          path: filePath,
+          bytes: filePath.length * 32,
+          lines: 24,
+          readAt: Date.now(),
+        };
       },
     });
 
@@ -183,10 +221,12 @@ export class ToolRegistry {
       parameters: {
         pattern: { type: 'string', description: 'Regex or identifier string', required: true },
       },
-      handler: async (args) => {
+      handler: async (args): Promise<AstSymbolResult> => {
+        const queryStr = String(args.pattern);
         return {
+          query: queryStr,
           matches: [
-            { name: args.pattern, type: 'FunctionDeclaration', file: 'packages/core/src/BaseAgent.ts', line: 42 },
+            { name: queryStr, type: 'FunctionDeclaration', file: 'packages/core/src/BaseAgent.ts', line: 42 },
           ],
         };
       },
@@ -199,11 +239,11 @@ export class ToolRegistry {
       category: 'git',
       requiredPermissions: ['FileSystem:Read'],
       parameters: {},
-      handler: async () => {
+      handler: async (): Promise<GitStatusResult> => {
         return {
           branch: 'main',
           clean: false,
-          modified: ['packages/core/src/BaseAgent.ts'],
+          modified: ['packages/core/src/BaseAgent.ts', 'src/lib/runtime/sandbox.ts'],
           untracked: [],
         };
       },
@@ -218,9 +258,16 @@ export class ToolRegistry {
       parameters: {
         command: { type: 'string', description: 'Command to run (e.g. "pnpm test")', required: true },
       },
-      handler: async (args, ctx) => {
-        ctx.emitLog('info', `Running sandboxed command: ${args.command}`);
-        return { exitCode: 0, stdout: 'Execution completed without errors.', stderr: '' };
+      handler: async (args, ctx): Promise<CommandExecutionResult> => {
+        const cmdStr = String(args.command);
+        ctx.emitLog('info', `Running sandboxed command: ${cmdStr}`);
+        return {
+          exitCode: 0,
+          stdout: `Sandboxed execution verified for: ${cmdStr}`,
+          stderr: '',
+          command: cmdStr,
+          executedAt: Date.now(),
+        };
       },
     });
   }

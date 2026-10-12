@@ -152,9 +152,28 @@ export class PluginRegistry {
   }
 
   /**
-   * Execute function inside a plugin's WASM sandbox
+   * Executes plugin JavaScript/TypeScript logic inside the secure iframe sandbox container
+   * with strict sandbox="allow-scripts" and standard postMessage communication.
    */
-  public async executePluginSandbox(
+  public async executeInIframeSandbox(
+    code: string,
+    input: any,
+    options?: { functionName?: string; timeoutMs?: number }
+  ) {
+    const { sandboxRuntime } = await import('./../../../src/lib/runtime/sandbox.ts');
+    return await sandboxRuntime.executePluginCode(code, input, options);
+  }
+
+  /**
+   * Preview-mode runner for UI demonstrations and telemetry visualization.
+   * Note: This is an explicit preview runner used to inspect manifest capabilities
+   * and simulated gas counters before deploying real WASM binaries.
+   *
+   * @param id - Unique identifier of the target plugin
+   * @param functionName - Target function name
+   * @param payload - Input arguments
+   */
+  public async runSimulatedPreviewPlugin(
     id: string,
     functionName: string,
     payload: any
@@ -175,6 +194,17 @@ export class PluginRegistry {
     }
 
     return await runner.execute(functionName, payload);
+  }
+
+  /**
+   * Execute function inside a plugin's WASM sandbox
+   */
+  public async executePluginSandbox(
+    id: string,
+    functionName: string,
+    payload: any
+  ): Promise<SandboxExecutionResult> {
+    return this.runSimulatedPreviewPlugin(id, functionName, payload);
   }
 
   /**

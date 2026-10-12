@@ -266,101 +266,37 @@ REQUIREMENTS:
 3. Do not include markdown conversational explanations before or after.
 `;
 
-    // 1. If Gemini key is available (preferred default for modern multimodal / coding SDK)
-    if (geminiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: geminiKey });
-        const modelId = 'gemini-2.5-flash';
+    // Route LLM generation through secure proxy route (/api/agent/run)
+    try {
+      const response = await fetch('/api/agent/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instruction,
+          filePath,
+          originalContent,
+          systemPrompt: `${this.config.systemPrompt}\nYou are an expert senior staff engineer. Return only clean code with no superfluous conversational prose.`,
+          model: this.config.model.modelId || 'gemini-2.5-flash',
+          userApiKey: geminiKey || openaiKey || anthropicKey,
+        }),
+        signal,
+      });
 
-        const response = await ai.models.generateContent({
-          model: modelId,
-          contents: promptText,
-          config: {
-            systemInstruction: `${this.config.systemPrompt}\nYou are a senior staff engineer. Return only clean code with no superfluous chit-chat.`,
-          },
-        });
-
-        if (signal.aborted) throw new Error('Generation aborted');
-
-        const rawResult = response.text || '';
-        return this.sanitizeLLMCodeBlock(rawResult, originalContent);
-      } catch (err: any) {
-        if (signal.aborted) throw err;
-        throw new Error(`Google Gemini API error: ${err.message || err}`);
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Proxy route returned HTTP status ${response.status}`);
       }
-    }
 
-    // 2. If OpenAI key is available
-    if (openaiKey) {
-      try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${openaiKey}`,
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: this.config.systemPrompt },
-              { role: 'user', content: promptText },
-            ],
-            temperature: 0.2,
-          }),
-          signal,
-        });
-
-        if (!response.ok) {
-          const errBody = await response.text();
-          throw new Error(`OpenAI API returned ${response.status}: ${errBody}`);
-        }
-
-        const data = await response.json();
-        const rawResult = data.choices?.[0]?.message?.content || '';
-        return this.sanitizeLLMCodeBlock(rawResult, originalContent);
-      } catch (err: any) {
-        if (signal.aborted) throw err;
-        throw new Error(`OpenAI API error: ${err.message || err}`);
+      const data = await response.json();
+      if (!data.text) {
+        throw new Error('Proxy route returned empty code generation output.');
       }
+
+      return this.sanitizeLLMCodeBlock(data.text, originalContent);
+    } catch (err: any) {
+      if (signal.aborted) throw err;
+      throw new Error(err?.message || 'Agent execution proxy failed.');
     }
-
-    // 3. If Anthropic key is available
-    if (anthropicKey) {
-      try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': anthropicKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: 'claude-3-7-sonnet-20250219',
-            max_tokens: 4096,
-            system: this.config.systemPrompt,
-            messages: [{ role: 'user', content: promptText }],
-          }),
-          signal,
-        });
-
-        if (!response.ok) {
-          const errBody = await response.text();
-          throw new Error(`Anthropic API returned ${response.status}: ${errBody}`);
-        }
-
-        const data = await response.json();
-        const rawResult = data.content?.[0]?.text || '';
-        return this.sanitizeLLMCodeBlock(rawResult, originalContent);
-      } catch (err: any) {
-        if (signal.aborted) throw err;
-        throw new Error(`Anthropic API error: ${err.message || err}`);
-      }
-    }
-
-    // If NO API keys are configured at all
-    throw new Error(
-      'No API key configured for Gemini, OpenAI, or Anthropic. Please open Settings (⚙️ in the top bar) and configure your API key to enable live agent code generation.'
-    );
   }
 
   /**

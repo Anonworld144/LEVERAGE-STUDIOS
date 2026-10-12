@@ -1,10 +1,10 @@
 /**
  * Leverage Studios - Local Secure Settings Store (BYOK)
- * Manages user API keys locally on the user's machine.
- * All keys remain strictly client-side/local and are never forwarded to intermediary proxy servers.
+ * Manages user API keys locally with AES-256-GCM encryption.
+ * Plaintext keys are strictly prohibited from raw storage.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { secureKeyManager } from './../../../src/lib/config/keys.ts';
 
 export type LLMProvider = 'gemini' | 'openai' | 'anthropic';
 
@@ -22,15 +22,13 @@ export interface ProviderStatus {
   maskedKey: string;
 }
 
-const STORAGE_KEY = 'leverage_studios_byok_settings_v1';
-
 export class SettingsStore {
   private static instance: SettingsStore;
-  private keys: UserApiKeys = {};
+  private inMemoryKeys: UserApiKeys = {};
   private listeners: Set<(keys: UserApiKeys) => void> = new Set();
 
   private constructor() {
-    this.loadFromStorage();
+    this.hydrateFromSecureVault();
   }
 
   public static getInstance(): SettingsStore {
@@ -40,37 +38,35 @@ export class SettingsStore {
     return SettingsStore.instance;
   }
 
-  private loadFromStorage(): void {
+  private async hydrateFromSecureVault(): Promise<void> {
     try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          this.keys = JSON.parse(raw);
-        }
-      }
-    } catch (err) {
-      console.warn('[SettingsStore] Failed to parse local settings:', err);
-      this.keys = {};
-    }
+      const gemini = await secureKeyManager.getClientKey('gemini');
+      const openai = await secureKeyManager.getClientKey('openai');
+      const anthropic = await secureKeyManager.getClientKey('anthropic');
 
-    // Fallback: Check if environment variable was injected for Gemini
-    if (!this.keys.geminiApiKey && typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) {
-      this.keys.geminiApiKey = process.env.GEMINI_API_KEY;
+      this.inMemoryKeys = {
+        geminiApiKey: gemini || undefined,
+        openaiApiKey: openai || undefined,
+        anthropicApiKey: anthropic || undefined,
+      };
+      this.notify();
+    } catch (e) {
+      console.warn('[SettingsStore] Vault hydration notice:', e);
     }
   }
 
   public getKeys(): UserApiKeys {
-    return { ...this.keys };
+    return { ...this.inMemoryKeys };
   }
 
   public getApiKey(provider: LLMProvider): string | undefined {
     switch (provider) {
       case 'gemini':
-        return this.keys.geminiApiKey?.trim();
+        return this.inMemoryKeys.geminiApiKey?.trim();
       case 'openai':
-        return this.keys.openaiApiKey?.trim();
+        return this.inMemoryKeys.openaiApiKey?.trim();
       case 'anthropic':
-        return this.keys.anthropicApiKey?.trim();
+        return this.inMemoryKeys.anthropicApiKey?.trim();
       default:
         return undefined;
     }
@@ -81,35 +77,38 @@ export class SettingsStore {
     return Boolean(key && key.length > 5);
   }
 
-  public setApiKey(provider: LLMProvider, key: string): void {
+  public async setApiKey(provider: LLMProvider, key: string): Promise<void> {
     const trimmed = key.trim();
-    if (provider === 'gemini') this.keys.geminiApiKey = trimmed;
-    if (provider === 'openai') this.keys.openaiApiKey = trimmed;
-    if (provider === 'anthropic') this.keys.anthropicApiKey = trimmed;
-    this.persist();
+    if (provider === 'gemini') this.inMemoryKeys.geminiApiKey = trimmed;
+    if (provider === 'openai') this.inMemoryKeys.openaiApiKey = trimmed;
+    if (provider === 'anthropic') this.inMemoryKeys.anthropicApiKey = trimmed;
+
+    await secureKeyManager.setClientKey(provider, trimmed);
+    this.notify();
   }
 
-  public saveAllKeys(newKeys: Partial<UserApiKeys>): void {
-    this.keys = {
-      ...this.keys,
+  public async saveAllKeys(newKeys: Partial<UserApiKeys>): Promise<void> {
+    this.inMemoryKeys = {
+      ...this.inMemoryKeys,
       ...newKeys,
     };
-    this.persist();
+
+    if (newKeys.geminiApiKey !== undefined) {
+      await secureKeyManager.setClientKey('gemini', newKeys.geminiApiKey);
+    }
+    if (newKeys.openaiApiKey !== undefined) {
+      await secureKeyManager.setClientKey('openai', newKeys.openaiApiKey);
+    }
+    if (newKeys.anthropicApiKey !== undefined) {
+      await secureKeyManager.setClientKey('anthropic', newKeys.anthropicApiKey);
+    }
+
+    this.notify();
   }
 
   public clearAllKeys(): void {
-    this.keys = {};
-    this.persist();
-  }
-
-  private persist(): void {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.keys));
-      }
-    } catch (err) {
-      console.error('[SettingsStore] Could not persist keys to localStorage:', err);
-    }
+    this.inMemoryKeys = {};
+    secureKeyManager.clearKeys();
     this.notify();
   }
 
@@ -121,7 +120,7 @@ export class SettingsStore {
   private notify(): void {
     for (const listener of this.listeners) {
       try {
-        listener({ ...this.keys });
+        listener({ ...this.inMemoryKeys });
       } catch (e) {
         console.error('[SettingsStore] Listener error:', e);
       }
@@ -139,25 +138,25 @@ export class SettingsStore {
         provider: 'gemini',
         name: 'Google Gemini',
         configured: this.hasKey('gemini'),
-        maskedKey: mask(this.keys.geminiApiKey),
+        maskedKey: mask(this.inMemoryKeys.geminiApiKey),
       },
       {
         provider: 'openai',
         name: 'OpenAI (GPT-4o)',
         configured: this.hasKey('openai'),
-        maskedKey: mask(this.keys.openaiApiKey),
+        maskedKey: mask(this.inMemoryKeys.openaiApiKey),
       },
       {
         provider: 'anthropic',
         name: 'Anthropic (Claude 3.7)',
         configured: this.hasKey('anthropic'),
-        maskedKey: mask(this.keys.anthropicApiKey),
+        maskedKey: mask(this.inMemoryKeys.anthropicApiKey),
       },
     ];
   }
 
   /**
-   * Lightweight API ping to verify validity of Gemini API key before saving
+   * Lightweight connection probe via proxy route to verify authentication
    */
   public async testGeminiConnection(apiKey: string): Promise<{ success: boolean; message: string }> {
     if (!apiKey || apiKey.trim().length < 8) {
@@ -165,23 +164,31 @@ export class SettingsStore {
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: 'Respond with the word "CONNECTED" only.',
+      const response = await fetch('/api/agent/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'Respond with CONNECTED only.',
+          userApiKey: apiKey.trim(),
+        }),
       });
 
-      if (response && response.text) {
+      if (response.ok) {
         return {
           success: true,
-          message: 'Connection verified successfully! Gemini is ready.',
+          message: 'Connection verified successfully via secure agent proxy! Gemini is ready.',
         };
       }
-      return { success: false, message: 'Received empty response from Gemini API.' };
+
+      const errData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errData.error || `Proxy returned HTTP status ${response.status}`,
+      };
     } catch (err: any) {
       return {
         success: false,
-        message: err.message || 'API connection failed. Please check key validity and network access.',
+        message: err?.message || 'API connection failed. Please check key validity and network access.',
       };
     }
   }

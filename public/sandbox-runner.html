@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Leverage Studios - Isolated Plugin Sandbox Container</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">
+</head>
+<body style="background: transparent; margin: 0; padding: 0; overflow: hidden; font-family: monospace;">
+  <script>
+    /**
+     * Isolated Sandbox Runner Container
+     * Runs inside an iframe with sandbox="allow-scripts" (without allow-same-origin).
+     * Has ZERO access to host DOM, cookies, local/session storage, or host network credentials.
+     */
+    (function() {
+      'use strict';
+
+      // Defend against parent framing inspection
+      const sanitizedConsoleLogs = [];
+      const captureLog = function(level, args) {
+        try {
+          const serialized = Array.from(args).map(function(item) {
+            if (typeof item === 'object') {
+              try { return JSON.stringify(item); } catch (e) { return String(item); }
+            }
+            return String(item);
+          }).join(' ');
+          sanitizedConsoleLogs.push('[' + level.toUpperCase() + '] ' + serialized);
+        } catch (e) {}
+      };
+
+      const guestConsole = {
+        log: function() { captureLog('info', arguments); },
+        warn: function() { captureLog('warn', arguments); },
+        error: function() { captureLog('error', arguments); },
+        info: function() { captureLog('info', arguments); }
+      };
+
+      window.addEventListener('message', async function(event) {
+        const data = event.data;
+        if (!data || !data.id || data.type !== 'LEVERAGE_SANDBOX_EXEC') {
+          return;
+        }
+
+        const execId = data.id;
+        const code = data.code || '';
+        const inputPayload = data.input || {};
+        const functionName = data.functionName || 'run';
+        const startTime = performance.now();
+        sanitizedConsoleLogs.length = 0;
+
+        try {
+          // Construct isolated function execution boundary
+          // Parameters: input, console
+          const guestFn = new Function('input', 'console', 'WebAssembly', '"use strict";\n' + code + '\nif (typeof ' + functionName + ' === "function") { return ' + functionName + '(input); } else if (typeof run === "function") { return run(input); } else { return { status: "executed", input: input }; }');
+
+          const rawOutput = await Promise.resolve(guestFn(inputPayload, guestConsole, window.WebAssembly));
+          const durationMs = Math.round((performance.now() - startTime) * 100) / 100;
+
+          // Post sanitized structured result back to host
+          event.source.postMessage({
+            type: 'LEVERAGE_SANDBOX_RESULT',
+            id: execId,
+            success: true,
+            result: rawOutput,
+            logs: sanitizedConsoleLogs.slice(-100),
+            durationMs: durationMs,
+          }, '*');
+        } catch (err) {
+          const durationMs = Math.round((performance.now() - startTime) * 100) / 100;
+          event.source.postMessage({
+            type: 'LEVERAGE_SANDBOX_RESULT',
+            id: execId,
+            success: false,
+            error: err && err.message ? err.message : String(err),
+            logs: sanitizedConsoleLogs.slice(-100),
+            durationMs: durationMs,
+          }, '*');
+        }
+      });
+
+      // Signal ready state to parent host
+      if (window.parent) {
+        window.parent.postMessage({ type: 'LEVERAGE_SANDBOX_READY' }, '*');
+      }
+    })();
+  </script>
+</body>
+</html>

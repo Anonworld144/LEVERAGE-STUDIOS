@@ -40,6 +40,7 @@ import {
   IPCBridge,
 } from '@leverage/core';
 import { PluginRegistry, PluginManifest, PluginCategory } from '@leverage/plugin-sdk';
+import { sandboxRuntime, SandboxExecutionResult } from './../../../../src/lib/runtime/sandbox.ts';
 import { RightPanelTab } from '../types.ts';
 
 interface AgentControlPanelProps {
@@ -85,6 +86,43 @@ export const AgentControlPanel: React.FC<AgentControlPanelProps> = ({
   // System Diagnostics state
   const [ipcTelemetry, setIpcTelemetry] = useState(ipcBridge.getTelemetryHistory());
   const [systemDiag, setSystemDiag] = useState<any>(null);
+
+  // Real Iframe Sandbox Execution state
+  const [sandboxCode, setSandboxCode] = useState<string>(
+    'function run(input) {\n  console.log("Isolated sandbox execution for:", input.name);\n  return { status: "success", executedAt: Date.now(), input: input };\n}'
+  );
+  const [isExecutingSandbox, setIsExecutingSandbox] = useState<boolean>(false);
+  const [sandboxExecResult, setSandboxExecResult] = useState<SandboxExecutionResult | null>(null);
+
+  const handleRunInIframeSandbox = async () => {
+    if (!selectedPlugin) return;
+    setIsExecutingSandbox(true);
+    setSandboxExecResult(null);
+
+    try {
+      const res = await sandboxRuntime.executePluginCode(
+        sandboxCode,
+        {
+          id: selectedPlugin.id,
+          name: selectedPlugin.name,
+          category: selectedPlugin.category,
+          permissions: selectedPlugin.permissions,
+        },
+        { functionName: 'run', timeoutMs: 6000 }
+      );
+      setSandboxExecResult(res);
+    } catch (err: any) {
+      setSandboxExecResult({
+        success: false,
+        result: null,
+        logs: [`[FATAL ERROR] ${err?.message || 'Execution failed'}`],
+        durationMs: 0,
+        error: err?.message || 'Execution error',
+      });
+    } finally {
+      setIsExecutingSandbox(false);
+    }
+  };
 
   // Subscribe to changes
   useEffect(() => {
@@ -553,15 +591,97 @@ export const AgentControlPanel: React.FC<AgentControlPanelProps> = ({
 
           {/* Plugin Detail Inspector Footer if selected */}
           {selectedPlugin && (
-            <div className="p-3 border-t border-[#1a1e29] bg-[#121622] text-xs">
-              <div className="flex items-center justify-between font-semibold text-white mb-1">
-                <span>{selectedPlugin.name}</span>
+            <div className="p-3 border-t border-[#1a1e29] bg-[#121622] text-xs space-y-3">
+              <div className="flex items-center justify-between font-semibold text-white">
+                <div className="flex items-center gap-2">
+                  <span>{selectedPlugin.name}</span>
+                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/40">
+                    sandbox="allow-scripts"
+                  </span>
+                </div>
                 <span className="font-mono text-[10px] text-neutral-400">ID: {selectedPlugin.id}</span>
               </div>
-              <div className="text-neutral-300 text-[11px] mb-2">{selectedPlugin.description}</div>
-              <div className="text-[10px] text-neutral-400 space-y-1 font-mono">
-                <div>WASM Sandbox: {selectedPlugin.wasm?.wasmRuntime} (Mem Limit: {selectedPlugin.wasm?.memoryLimitMb}MB, Gas: {selectedPlugin.wasm?.gasLimit?.toLocaleString()})</div>
-                <div>Permissions Required: {selectedPlugin.permissions.join(', ') || 'None'}</div>
+              <div className="text-neutral-300 text-[11px]">{selectedPlugin.description}</div>
+
+              {/* Real Isolated Iframe Sandbox Runner */}
+              <div className="rounded-lg bg-[#0a0c10] border border-[#1e2330] p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-neutral-300 flex items-center gap-1.5">
+                    <Shield className="h-3 w-3 text-indigo-400" />
+                    Isolated Execution Container (postMessage)
+                  </span>
+                  <span className="text-[10px] text-neutral-500 font-mono">No same-origin access</span>
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={sandboxCode}
+                  onChange={(e) => setSandboxCode(e.target.value)}
+                  className="w-full rounded bg-[#11141d] border border-[#1e2330] p-2 font-mono text-[11px] text-neutral-200 focus:border-indigo-500 focus:outline-none"
+                  placeholder="Enter guest plugin code..."
+                />
+
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    onClick={handleRunInIframeSandbox}
+                    disabled={isExecutingSandbox}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors disabled:opacity-50"
+                  >
+                    <Play className="h-3 w-3 fill-current" />
+                    {isExecutingSandbox ? 'Executing in Iframe...' : 'Run in Isolated Sandbox'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const res = await pluginRegistry.runSimulatedPreviewPlugin(selectedPlugin.id, 'format_code', { ping: true });
+                      setSandboxExecResult({
+                        success: res.success,
+                        result: res.output,
+                        logs: res.logs,
+                        durationMs: res.durationMs,
+                        error: res.error,
+                      });
+                    }}
+                    title="Run preview simulation without guest container"
+                    className="rounded bg-[#1a1e29] hover:bg-[#222838] px-2.5 py-1.5 text-[10px] font-mono text-neutral-400 hover:text-white transition-colors"
+                  >
+                    Preview Simulation
+                  </button>
+                </div>
+
+                {/* Live Sandbox Execution Output */}
+                {sandboxExecResult && (
+                  <div className="mt-2 rounded bg-[#07090e] border border-[#1e2330] p-2 space-y-1 text-[10px] font-mono">
+                    <div className="flex items-center justify-between">
+                      <span className={sandboxExecResult.success ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                        {sandboxExecResult.success ? '✓ Container Success' : '✗ Sandbox Fault'}
+                      </span>
+                      <span className="text-neutral-500">{sandboxExecResult.durationMs}ms</span>
+                    </div>
+
+                    {sandboxExecResult.error && (
+                      <div className="text-rose-400">{sandboxExecResult.error}</div>
+                    )}
+
+                    {sandboxExecResult.logs?.length > 0 && (
+                      <div className="text-neutral-400 max-h-16 overflow-y-auto space-y-0.5">
+                        {sandboxExecResult.logs.map((log, idx) => (
+                          <div key={idx}>{log}</div>
+                        ))}
+                      </div>
+                    )}
+
+                    {sandboxExecResult.result && (
+                      <div className="text-indigo-300 max-h-20 overflow-y-auto">
+                        Output: {JSON.stringify(sandboxExecResult.result)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="text-[10px] text-neutral-400 space-y-0.5 font-mono">
+                <div>WASM Runtime Profile: {selectedPlugin.wasm?.wasmRuntime} (Mem Limit: {selectedPlugin.wasm?.memoryLimitMb}MB)</div>
+                <div>Declared Scopes: {selectedPlugin.permissions.join(', ') || 'Strict Zero-Trust'}</div>
               </div>
             </div>
           )}
