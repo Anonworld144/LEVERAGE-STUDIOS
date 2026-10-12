@@ -1,0 +1,31 @@
+[package]
+name = "leverage-studios"
+version = "0.1.0"
+description = "Leverage Studios Desktop Shell (Tauri 2.0 + Rust Engine)"
+edition = "2021"
+
+[lib]
+name = "leverage_studios_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["tray-icon"] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-fs = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+extism = { version = "1.4", optional = true }
+wasmtime = { version = "24.0", optional = true }
+thiserror = "1.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+wasm-engine = ["dep:extism", "dep:wasmtime"]

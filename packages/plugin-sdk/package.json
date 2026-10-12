@@ -1,0 +1,16 @@
+{
+  "name": "@leverage/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Extensible plugin registration framework supporting tools, UI panels, and custom LLM providers for Leverage Studios",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Testing plugin-sdk\""
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

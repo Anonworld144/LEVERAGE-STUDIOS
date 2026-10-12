@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "types": ["vite/client"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@leverage/core/*": [
+        "./packages/core/src/*"
+      ],
+      "@leverage/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@leverage/plugin-sdk/*": [
+        "./packages/plugin-sdk/src/*"
+      ],
+      "@leverage/plugin-sdk": [
+        "./packages/plugin-sdk/src/index.ts"
+      ],
+      "@studio/*": [
+        "./apps/studio/src/*"
+      ],
+      "@docs/*": [
+        "./apps/docs/src/*"
+      ]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
+}

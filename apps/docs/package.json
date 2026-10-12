@@ -1,0 +1,11 @@
+{
+  "name": "@leverage/docs",
+  "version": "0.1.0",
+  "description": "Documentation and Plugin Developer Portal for Leverage Studios",
+  "main": "./src/DocsPortal.tsx",
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@leverage/studio",
+  "version": "0.1.0",
+  "description": "Main Tauri + React desktop frontend UI for Leverage Studios",
+  "main": "./src/StudioApp.tsx",
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
