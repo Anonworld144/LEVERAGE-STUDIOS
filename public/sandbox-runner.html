@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Leverage Studios - Isolated Plugin Sandbox Container</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none';">
 </head>
 <body style="background: transparent; margin: 0; padding: 0; overflow: hidden; font-family: monospace;">
   <script>
@@ -15,7 +15,6 @@
     (function() {
       'use strict';
 
-      // Defend against parent framing inspection
       const sanitizedConsoleLogs = [];
       const captureLog = function(level, args) {
         try {
@@ -43,21 +42,17 @@
         }
 
         const execId = data.id;
-        const code = data.code || '';
-        const inputPayload = data.input || {};
-        const functionName = data.functionName || 'run';
+        const code = typeof data.code === 'string' ? data.code : '';
+        const inputPayload = data.input && typeof data.input === 'object' ? data.input : {};
+        const functionName = typeof data.functionName === 'string' ? data.functionName : 'run';
         const startTime = performance.now();
         sanitizedConsoleLogs.length = 0;
 
         try {
-          // Construct isolated function execution boundary
-          // Parameters: input, console
-          const guestFn = new Function('input', 'console', 'WebAssembly', '"use strict";\n' + code + '\nif (typeof ' + functionName + ' === "function") { return ' + functionName + '(input); } else if (typeof run === "function") { return run(input); } else { return { status: "executed", input: input }; }');
-
+          const guestFn = new Function('input', 'console', 'WebAssembly', '"use strict";\n' + code + '\nif (typeof ' + functionName + ' === "function") { return ' + functionName + '(input); } else { return undefined; }');
           const rawOutput = await Promise.resolve(guestFn(inputPayload, guestConsole, window.WebAssembly));
           const durationMs = Math.round((performance.now() - startTime) * 100) / 100;
 
-          // Post sanitized structured result back to host
           event.source.postMessage({
             type: 'LEVERAGE_SANDBOX_RESULT',
             id: execId,
@@ -79,7 +74,6 @@
         }
       });
 
-      // Signal ready state to parent host
       if (window.parent) {
         window.parent.postMessage({ type: 'LEVERAGE_SANDBOX_READY' }, '*');
       }

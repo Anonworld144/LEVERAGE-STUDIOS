@@ -1,7 +1,3 @@
-/**
- * Leverage Studios - Main Studio Application Orchestrator
- */
-
 import React, { useState } from 'react';
 import { StudioTitlebar } from './components/StudioTitlebar.tsx';
 import { FileExplorer } from './components/FileExplorer.tsx';
@@ -134,10 +130,12 @@ export const StudioApp: React.FC = () => {
       const store = SettingsStore.getInstance();
       setHasConfiguredKey(store.hasKey('gemini') || store.hasKey('openai') || store.hasKey('anthropic'));
     });
-    return unsub;
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
   }, []);
 
-  const activeFile = files.find((f) => f.id === activeFileId) || files[0];
+  const activeFile = files.find((f) => f.id === activeFileId) || files[0] || null;
 
   const handleSelectFile = (file: WorkspaceFile) => {
     setActiveFileId(file.id);
@@ -157,16 +155,17 @@ export const StudioApp: React.FC = () => {
   };
 
   const handleDeleteFile = (fileId: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
-    if (activeFileId === fileId) {
-      const remaining = files.filter((f) => f.id !== fileId);
-      if (remaining.length > 0) {
-        setActiveFileId(remaining[0].id);
+    setFiles((prev) => {
+      const remaining = prev.filter((f) => f.id !== fileId);
+      if (activeFileId === fileId) {
+        setActiveFileId(remaining[0]?.id ?? '');
       }
-    }
+      return remaining;
+    });
   };
 
   const handleChangeContent = (newContent: string) => {
+    if (!activeFile) return;
     setFiles((prev) =>
       prev.map((f) => (f.id === activeFile.id ? { ...f, content: newContent, isModified: true } : f))
     );
@@ -175,7 +174,7 @@ export const StudioApp: React.FC = () => {
   const handleAcceptDiff = (diff: StreamingDiff) => {
     setFiles((prev) =>
       prev.map((f) => {
-        if (f.path === diff.filePath || f.id === activeFile.id) {
+        if (f.path === diff.filePath) {
           return {
             ...f,
             content: diff.modifiedContent,
@@ -191,47 +190,54 @@ export const StudioApp: React.FC = () => {
 
   const handleRejectDiff = (diff: StreamingDiff) => {
     setFiles((prev) =>
-      prev.map((f) => (f.id === activeFile.id ? { ...f, hasAgentDiff: false } : f))
+      prev.map((f) => (f.id === activeFile?.id ? { ...f, hasAgentDiff: false } : f))
     );
     setPendingDiff(null);
   };
 
   const handleTriggerAgentAction = async (actionType: string) => {
+    if (!activeFile) return;
+
     setIsAgentRunning(true);
     setRightPanelTab('console');
 
-    const agentManager = AgentManager.getInstance();
-    const coder = agentManager.getAgent('agent_coder');
+    try {
+      const agentManager = AgentManager.getInstance();
+      const coder = agentManager.getAgent('agent_coder');
 
-    if (coder) {
-      const prompt =
-        actionType === 'optimize'
-          ? 'Optimize AST execution loops and memoize expensive sub-routines'
-          : actionType === 'audit'
-          ? 'Audit zero-trust sandbox boundaries and enforce type invariant checks'
-          : 'Refactor code for high-throughput concurrency';
+      if (coder) {
+        const prompt =
+          actionType === 'optimize'
+            ? 'Optimize AST execution loops and memoize expensive sub-routines'
+            : actionType === 'audit'
+              ? 'Audit zero-trust sandbox boundaries and enforce type invariant checks'
+              : 'Refactor code for high-throughput concurrency';
 
-      const res = await coder.executeTask(prompt, {
-        workspaceRoot: '/workspace',
-        activeFilePath: activeFile.path,
-        fileContent: activeFile.content,
-      });
+        const res = await coder.executeTask(prompt, {
+          workspaceRoot: '/workspace',
+          activeFilePath: activeFile.path,
+          fileContent: activeFile.content,
+        });
 
-      if (res.diffs.length > 0) {
-        const diff = res.diffs[0];
-        setPendingDiff(diff);
-        setFiles((prev) =>
-          prev.map((f) => (f.id === activeFile.id ? { ...f, hasAgentDiff: true } : f))
-        );
+        if (res && Array.isArray(res.diffs) && res.diffs.length > 0) {
+          const diff = res.diffs[0];
+          setPendingDiff(diff);
+          setFiles((prev) =>
+            prev.map((f) => (f.id === activeFile.id ? { ...f, hasAgentDiff: true } : f))
+          );
+        }
       }
+    } finally {
+      setIsAgentRunning(false);
     }
-
-    setIsAgentRunning(false);
   };
+
+  if (!activeFile) {
+    return null;
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0c0e14] text-[#e1e4ea] font-sans">
-      {/* Titlebar (Tauri Desktop Window Shell) */}
       <StudioTitlebar
         currentView={currentView}
         onViewChange={setCurrentView}
@@ -242,12 +248,10 @@ export const StudioApp: React.FC = () => {
         hasConfiguredKey={hasConfiguredKey}
       />
 
-      {/* Main Workspace Body */}
       {currentView === 'docs' ? (
         <DocsPortal onSwitchToStudio={() => setCurrentView('studio')} />
       ) : (
         <div className="flex flex-1 overflow-hidden">
-          {/* Section 1: File Explorer & Workspace Tree (Width: 240px) */}
           <div className="w-64 h-full shrink-0">
             <FileExplorer
               files={files}
@@ -258,7 +262,6 @@ export const StudioApp: React.FC = () => {
             />
           </div>
 
-          {/* Section 2: Monaco Code Editor Wrapper with Diff View (Center Viewport) */}
           <div className="flex-1 h-full min-w-0">
             <MonacoEditorWrapper
               activeFile={activeFile}
@@ -271,7 +274,6 @@ export const StudioApp: React.FC = () => {
             />
           </div>
 
-          {/* Section 3: Agent Control Panel (Width: 420px) */}
           <div className="w-[420px] h-full shrink-0">
             <AgentControlPanel
               activeFilePath={activeFile.path}
@@ -286,7 +288,6 @@ export const StudioApp: React.FC = () => {
         </div>
       )}
 
-      {/* Local BYOK Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );

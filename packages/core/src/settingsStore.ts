@@ -28,7 +28,9 @@ export class SettingsStore {
   private listeners: Set<(keys: UserApiKeys) => void> = new Set();
 
   private constructor() {
-    this.hydrateFromSecureVault();
+    if (typeof window !== 'undefined') {
+      void this.hydrateFromSecureVault();
+    }
   }
 
   public static getInstance(): SettingsStore {
@@ -39,6 +41,10 @@ export class SettingsStore {
   }
 
   private async hydrateFromSecureVault(): Promise<void> {
+    if (typeof window === 'undefined' || !window.crypto?.subtle) {
+      return;
+    }
+
     try {
       const gemini = await secureKeyManager.getClientKey('gemini');
       const openai = await secureKeyManager.getClientKey('openai');

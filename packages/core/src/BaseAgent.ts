@@ -71,11 +71,7 @@ export class BaseAgent {
     }
   }
 
-  public addStep(
-    type: AgentStep['type'],
-    content: string,
-    metadata?: AgentStep['metadata']
-  ): AgentStep {
+  public addStep(type: AgentStep['type'], content: string, metadata?: AgentStep['metadata']): AgentStep {
     const step: AgentStep = {
       id: `step_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       agentId: this.config.id,
@@ -91,10 +87,6 @@ export class BaseAgent {
     return step;
   }
 
-  /**
-   * Execute an agent task with real-time lifecycle transitions, 30s timeout guard,
-   * and live LLM generation using the user's local BYOK credentials.
-   */
   public async executeTask(
     userInstruction: string,
     contextParams: {
@@ -103,7 +95,6 @@ export class BaseAgent {
       fileContent?: string;
     }
   ): Promise<{ success: boolean; result: string; diffs: StreamingDiff[] }> {
-    // 30-second default execution timeout guard
     const timeoutMs = this.config.timeoutMs || 30000;
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
@@ -117,23 +108,19 @@ export class BaseAgent {
     }, timeoutMs);
 
     try {
-      // 1. Planning State
       this.setState('Planning');
       this.addStep('thought', `Analyzing instruction: "${userInstruction}" for target ${contextParams.activeFilePath || 'workspace'}`);
 
-      const planContent = `1. Load AST context and verify file boundaries\n2. Authorize local BYOK credentials\n3. Invoke LLM generation with role "${this.config.role}"\n4. Compute streaming unified diff and verify syntax`;
+      const planContent = `1. Load AST context and verify file boundaries\n2. Authorize local BYOK credentials\n3. Invoke LLM generation with role "${this.config.role}"\n4. Compute streaming unified diff and guard invariants`;
       this.addStep('plan', planContent);
 
       if (signal.aborted) throw new Error('Task aborted before execution');
 
-      // 2. Executing Tool State with Sanitized Security Context
       this.setState('Executing Tool');
       const executionContext: AgentExecutionContext = {
         agentId: this.config.id,
         workspaceRoot: contextParams.workspaceRoot,
         activeFilePath: contextParams.activeFilePath,
-        // Environment variables restricted to non-sensitive runtime configs only.
-        // Raw API secrets (GEMINI_API_KEY, etc.) are strictly isolated and never passed here.
         environmentVariables: Object.freeze({
           APP_NAME: 'Leverage Studios',
           RUNTIME_MODE: 'desktop-local',
@@ -159,7 +146,6 @@ export class BaseAgent {
         abortSignal: signal,
       };
 
-      // Call tool if needed
       if (this.config.allowedTools.includes('fs_read_file') && contextParams.activeFilePath) {
         await ToolRegistry.getInstance().executeTool('fs_read_file', { path: contextParams.activeFilePath }, executionContext);
         this.addStep('tool_call', `Inspected AST structure for ${contextParams.activeFilePath}`, { toolName: 'fs_read_file' });
@@ -167,11 +153,9 @@ export class BaseAgent {
 
       if (signal.aborted) throw new Error('Task aborted during tool execution');
 
-      // 3. Real Code Generation via BYOK LLM
       if (contextParams.activeFilePath && contextParams.fileContent !== undefined) {
         this.addStep('thought', `Querying LLM engine for ${this.config.name} (${this.config.role})...`);
 
-        // Perform real LLM generation
         const modifiedContent = await this.generateCodeWithLLM(
           contextParams.fileContent,
           userInstruction,
@@ -193,11 +177,9 @@ export class BaseAgent {
         }
       }
 
-      // 4. Debugging & Invariant Verification Phase
       this.setState('Debugging');
       this.addStep('diagnostic', 'Validating syntax constraints, type bounds, and AST invariants... 0 diagnostics found.');
 
-      // 5. Completion
       this.setState('Completed');
       this.addStep('thought', `Workflow completed successfully. Ready for user diff inspection and commit.`);
 
@@ -229,9 +211,6 @@ export class BaseAgent {
     }
   }
 
-  /**
-   * Real LLM generation executing directly against local BYOK credentials
-   */
   private async generateCodeWithLLM(
     originalContent: string,
     instruction: string,
@@ -239,46 +218,24 @@ export class BaseAgent {
     signal: AbortSignal
   ): Promise<string> {
     const settings = SettingsStore.getInstance();
-    const provider = this.config.model.provider;
-
-    // Check Gemini API Key
     const geminiKey = settings.getApiKey('gemini');
     const openaiKey = settings.getApiKey('openai');
     const anthropicKey = settings.getApiKey('anthropic');
 
-    const promptText = `
-You are an expert AI software engineer operating as the "${this.config.name}" agent with role "${this.config.role}".
-Your task is to modify the following file based on the instruction.
+    const requestPayload = {
+      instruction,
+      filePath,
+      originalContent,
+      systemPrompt: `${this.config.systemPrompt}\nYou are an expert senior staff engineer. Return only clean code with no superfluous conversational prose.`,
+      model: this.config.model.modelId || 'gemini-2.5-flash',
+      userApiKey: geminiKey || openaiKey || anthropicKey,
+    };
 
-FILE PATH: ${filePath}
-
-INSTRUCTION:
-${instruction}
-
-EXISTING FILE CONTENT:
-\`\`\`
-${originalContent}
-\`\`\`
-
-REQUIREMENTS:
-1. Return ONLY the complete, updated file content.
-2. Maintain strong typing, correct imports, and clean structure.
-3. Do not include markdown conversational explanations before or after.
-`;
-
-    // Route LLM generation through secure proxy route (/api/agent/run)
     try {
       const response = await fetch('/api/agent/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          instruction,
-          filePath,
-          originalContent,
-          systemPrompt: `${this.config.systemPrompt}\nYou are an expert senior staff engineer. Return only clean code with no superfluous conversational prose.`,
-          model: this.config.model.modelId || 'gemini-2.5-flash',
-          userApiKey: geminiKey || openaiKey || anthropicKey,
-        }),
+        body: JSON.stringify(requestPayload),
         signal,
       });
 
@@ -288,31 +245,37 @@ REQUIREMENTS:
       }
 
       const data = await response.json();
-      if (!data.text) {
-        throw new Error('Proxy route returned empty code generation output.');
+      const directText = typeof data?.text === 'string' ? data.text : '';
+      const diffs = Array.isArray(data?.diffs) ? data.diffs : [];
+
+      if (diffs.length > 0) {
+        const firstDiff = diffs[0];
+        const modifiedContent = typeof firstDiff?.modifiedContent === 'string' ? firstDiff.modifiedContent : '';
+        if (modifiedContent.trim()) {
+          return this.sanitizeLLMCodeBlock(modifiedContent, originalContent);
+        }
       }
 
-      return this.sanitizeLLMCodeBlock(data.text, originalContent);
+      if (directText.trim()) {
+        return this.sanitizeLLMCodeBlock(directText, originalContent);
+      }
+
+      throw new Error('Proxy route returned empty code generation output.');
     } catch (err: any) {
       if (signal.aborted) throw err;
       throw new Error(err?.message || 'Agent execution proxy failed.');
     }
   }
 
-  /**
-   * Strips markdown fences if the LLM wrapped the code in ```language ... ```
-   */
   private sanitizeLLMCodeBlock(raw: string, fallback: string): string {
     const trimmed = raw.trim();
     if (!trimmed) return fallback;
 
-    // Remove opening ```ts, ```typescript, ```rust, ``` etc.
     const fenceMatch = trimmed.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
     if (fenceMatch && fenceMatch[1]) {
       return fenceMatch[1];
     }
 
-    // Remove leading fence if closing fence is missing
     if (trimmed.startsWith('```')) {
       return trimmed.replace(/^```[a-zA-Z0-9_-]*\n?/, '').replace(/```$/, '').trim();
     }

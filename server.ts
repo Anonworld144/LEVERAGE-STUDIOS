@@ -14,13 +14,79 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const MAX_PROMPT_CHARS = 64 * 1024;
+const ALLOW_CLIENT_API_KEYS = process.env.ALLOW_CLIENT_API_KEYS === 'true';
+
+function sanitizePromptText(value: string | undefined, fallback = ''): string {
+  const raw = typeof value === 'string' ? value : fallback;
+  return raw.slice(0, MAX_PROMPT_CHARS).replace(/```/g, '```\u200B');
+}
+
+function parseDiffs(rawText: string, fallbackPath: string) {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return [{ filePath: fallbackPath, modifiedContent: '' }];
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed?.diffs)) {
+      return parsed.diffs
+        .filter((item: any) => item && typeof item === 'object')
+        .map((item: any) => ({
+          filePath: String(item.filePath || fallbackPath),
+          modifiedContent: String(item.modifiedContent ?? ''),
+        }));
+    }
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: any) => ({
+        filePath: String(item.filePath || fallbackPath),
+        modifiedContent: String(item.modifiedContent ?? item.text ?? ''),
+      }));
+    }
+    if (parsed && typeof parsed === 'object' && typeof parsed.modifiedContent === 'string') {
+      return [{ filePath: String(parsed.filePath || fallbackPath), modifiedContent: parsed.modifiedContent }];
+    }
+  } catch {
+    // Fall through to code-fence parsing below.
+  }
+
+  const maybeFenced = trimmed.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
+  const codeSegment = maybeFenced ? maybeFenced[1] : trimmed;
+  const normalized = codeSegment
+    .replace(/^```[a-zA-Z0-9_-]*\n?/, '')
+    .replace(/```$/, '')
+    .trim();
+
+  return [{ filePath: fallbackPath, modifiedContent: normalized }];
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '10mb' }));
 
-  // API Proxy Route: /api/agent/run
+  app.use((req, res, next) => {
+    const ip = req.ip || 'unknown';
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    const maxRequests = 60;
+    const key = String(ip);
+    const globalStore = (globalThis as any).__leverageRateMap ?? new Map<string, number[]>();
+    (globalThis as any).__leverageRateMap = globalStore;
+
+    const bucket = globalStore.get(key) || [];
+    const recent = bucket.filter((ts: number) => now - ts < windowMs);
+    if (recent.length >= maxRequests) {
+      return res.status(429).json({ success: false, error: 'Too many requests. Please slow down.' });
+    }
+
+    recent.push(now);
+    globalStore.set(key, recent);
+    next();
+  });
+
   app.post('/api/agent/run', async (req: Request, res: Response) => {
     try {
       const {
@@ -32,7 +98,7 @@ async function startServer() {
         systemPrompt = 'You are a senior staff engineer operating in Leverage Studios.',
         model = 'gemini-2.5-flash',
         userApiKey,
-      } = req.body;
+      } = req.body ?? {};
 
       if (action === 'check_config') {
         const hasServerKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
@@ -43,29 +109,37 @@ async function startServer() {
         });
       }
 
-      const effectiveKey = (process.env.GEMINI_API_KEY || userApiKey || '').trim();
+      const allowedModels = new Set(['gemini-2.5-flash', 'gemini-2.5-pro', 'gpt-4o', 'claude-3-7-sonnet']);
+      if (!allowedModels.has(model)) {
+        return res.status(400).json({ success: false, error: 'Requested model is not allowed by this proxy.' });
+      }
+
+      const serverKey = (process.env.GEMINI_API_KEY || '').trim();
+      const trustedClientKey = ALLOW_CLIENT_API_KEYS ? (typeof userApiKey === 'string' ? userApiKey.trim() : '') : '';
+      const effectiveKey = serverKey || trustedClientKey;
+
       if (!effectiveKey) {
         return res.status(401).json({
           success: false,
-          error: 'No API key configured. Provide GEMINI_API_KEY in server environment or configure via Settings.',
+          error: 'No API key configured. Set GEMINI_API_KEY in the server environment or enable authenticated user keys.',
         });
       }
 
-      let fullPrompt = prompt || '';
+      let fullPrompt = sanitizePromptText(prompt, '');
       if (!fullPrompt && instruction) {
         fullPrompt = `
-FILE PATH: ${filePath || 'untitled'}
+FILE PATH: ${sanitizePromptText(filePath, 'untitled')}
 
 INSTRUCTION:
-${instruction}
+${sanitizePromptText(instruction, '')}
 
 EXISTING FILE CONTENT:
 \`\`\`
-${originalContent || ''}
+${sanitizePromptText(originalContent, '')}
 \`\`\`
 
 REQUIREMENTS:
-1. Return ONLY the complete updated code content.
+1. Return ONLY a JSON object matching { "diffs": [{ "filePath": "...", "modifiedContent": "..." }] }.
 2. Keep strong typing, exports, and syntax invariants.
 3. Do not include introductory or concluding conversational prose.
 `;
@@ -80,17 +154,19 @@ REQUIREMENTS:
 
       const ai = new GoogleGenAI({ apiKey: effectiveKey });
       const response = await ai.models.generateContent({
-        model: model,
+        model,
         contents: fullPrompt,
-        config: {
-          systemInstruction: systemPrompt,
-        },
+        config: { systemInstruction: systemPrompt },
       });
+
+      const rawText = response.text || '';
+      const diffs = parseDiffs(rawText, filePath || 'generated-file.ts');
 
       return res.json({
         success: true,
-        text: response.text || '',
-        model: model,
+        diffs,
+        text: rawText,
+        model,
         timestamp: Date.now(),
       });
     } catch (err: any) {
@@ -102,7 +178,6 @@ REQUIREMENTS:
     }
   });
 
-  // Vite development middleware or production static serving
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
