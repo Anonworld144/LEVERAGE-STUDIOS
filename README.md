@@ -1,148 +1,62 @@
-# LEVERAGE-STUDIOS: Local-First AI Agent Coding Studio
+## SECURITY & RELEASE CHECKLIST (IMPORTANT)
 
-> An open-source, local-first AI agent desktop studio built with Tauri 2.0, React 19, and TypeScript. Features multi-agent DAG orchestration and Bring Your Own Key (BYOK) local security.
+This section documents critical security considerations and a hardening checklist you MUST follow before publishing releases or claiming BYOK/sandbox guarantees. Leverage Studios is a developer-preview prototype — the defaults are intentionally permissive for local development.
 
----
+### Short summary
+- The project implements a BYOK model and an LLM proxy, but by default the server may accept client-supplied API keys only when explicitly enabled. Accepting per-request keys without authentication is unsafe and may expose your server to abuse.
+- LLM outputs are nondeterministic; the proxy attempts to coerce and parse machine-readable JSON diffs, but you MUST add tests and monitoring for parse failures to avoid writing malformed or unsafe code to disk.
+- The iframe sandbox is hardened but still includes inline script usage in development. For production, serve it with strict CSP headers and remove `unsafe-inline`/`unsafe-eval` where possible.
 
-> ### ⚠️ Project Status: Developer Preview / Active Prototype
-> **Leverage Studios is currently in Developer Preview / Active Prototype.**
-> All plugin executions and model inferences run within strictly isolated, audited boundaries:
-> - **Zero-Trust Plugin Sandboxing**: Executed within an isolated iframe container configured with `sandbox="allow-scripts"` (strictly omitting `allow-same-origin`) to prevent any access to host cookies, DOM, or storage.
-> - **Encrypted BYOK Key Storage**: Client-side API keys are encrypted at rest using the Web Cryptography API with **AES-256-GCM** (never stored in plaintext).
-> - **Server-Side API Proxying**: LLM requests route through protected proxy endpoints (`/api/agent/run`) to prevent client credential leakage.
+### Critical warnings (Do NOT ship without addressing these)
+- Do NOT enable ALLOW_CLIENT_API_KEYS in production unless you implement authenticated user accounts, secure server-side key storage, per-user quotas, and auditing.
+- Do NOT rely on sessionStorage/IndexedDB alone for secret storage on desktop — prefer OS-native keystores (Keychain, DPAPI, Secret Service) when packaging via Tauri.
+- Do NOT accept raw LLM output as authoritative. Always parse and validate JSON diffs server-side, and add post-parse validation checks (syntax, type checks) before applying edits.
 
----
+### Minimum hardening checklist (complete before public release)
+- [ ] Choose a key model and implement it fully:
+  - Option A (recommended initially): Server-only keys
+    - Set GEMINI_API_KEY (and others) in your server environment.
+    - Disable ALLOW_CLIENT_API_KEYS (default false).
+    - Update UI to only use `check_config` for key verification.
+  - Option B: Authenticated BYOK
+    - Implement user authentication.
+    - Accept client keys only during an authenticated onboarding flow.
+    - Store encrypted keys server-side or use ephemeral token exchanges.
+    - Enforce per-account rate limits and logging.
 
-[![CI/CD Release](https://github.com/leverage-studios/leverage-studios/actions/workflows/build-release.yml/badge.svg)](https://github.com/leverage-studios/leverage-studios/actions)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Platform: Windows & Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-brightgreen.svg)]()
-[![Tauri: 2.0](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app/)
-[![Monaco Editor](https://img.shields.io/badge/Editor-Monaco-blue.svg)](https://microsoft.github.io/monaco-editor/)
-[![Security: Audited Sandboxing](https://img.shields.io/badge/Security-Iframe%20%2B%20WASM%20Sandbox-blueviolet.svg)]()
+- [ ] Use a production-grade rate limiter (express-rate-limit or Redis-backed) and monitor for abnormal traffic.
+- [ ] Enforce strict CORS allowlist and always serve via HTTPS with HSTS.
+- [ ] Serve `public/sandbox-runner.html` with strict CSP HTTP headers; remove `unsafe-inline`/`unsafe-eval` where possible and use nonces.
+- [ ] Validate `postMessage` origin on both host and guest sides; implement a message schema and (optionally) HMAC verification for high-security deployments.
+- [ ] Migrate desktop key storage to the OS keystore via Tauri secure APIs.
+- [ ] Add automated tests and CI checks:
+  - unit tests for server parse/parseDiffs and proxy behavior (mock provider)
+  - unit tests for secureKeyManager encryption/decryption
+  - integration tests for agent.executeTask -> diffs flow
+  - sandbox message roundtrip tests
+- [ ] Add dependency audits and enable Dependabot/Renovate.
+- [ ] Configure CI to use secret stores and ensure secrets are never printed in logs.
+- [ ] Add logging/monitoring/alerts for parsing failures, failed proxy attempts, and potential abuse.
+- [ ] Conduct a security review / penetration test focusing on postMessage abuse, local storage hardening, and proxy abuse scenarios.
 
----
-
-## 🔒 Security & Privacy Policy (BYOK Model)
-
-Leverage Studios is designed specifically to prevent the common security pitfalls flagged by automated scanners:
-
-### 1. Zero Plaintext Secret Storage
-- **Cryptographic Vault**: Keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are managed via `src/lib/config/keys.ts` using **AES-256-GCM** authenticated encryption with hardware/browser-derived keys (`window.crypto.subtle`).
-- **No Unencrypted Storage**: Plaintext keys are strictly prohibited from `localStorage` or `sessionStorage`.
-- **Environment Isolation**: The `AgentExecutionContext` explicitly freezes and strips ambient operating system environment variables, preventing tool scripts or plugins from scraping system tokens.
-
-### 2. Isolated Plugin Execution Runtime
-- **Iframe Container (`public/sandbox-runner.html`)**: Plugins and guest code execute inside an isolated iframe with `sandbox="allow-scripts"`. Omitting `allow-same-origin` guarantees that guest code cannot access host cookies, session tokens, or local storage.
-- **postMessage Protocol**: All host-guest communication is strictly mediated via structured `postMessage` validation with execution timeouts (default 8s) and memory recycle handlers.
-- **WebAssembly Sandboxing**: For WebAssembly binaries, linear memory is capped (16MB–64MB) and capability imports (`Network:HTTP`, `FileSystem:Write`) enforce runtime privilege checks.
-
-### 3. Server-Side Model Proxy Route
-- All agent inference requests route through `/api/agent/run` (`app/api/agent/run/route.ts` / `server.ts`) rather than direct unauthenticated browser fetches, protecting headers and enabling server-side key injection.
-
----
-
-## 🏛️ System Architecture Diagram
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                          LEVERAGE STUDIOS DESKTOP                         │
-├───────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   ┌───────────────────────────────────────────────────────────────────┐   │
-│   │                     UI LAYER (React 19 + Vite)                    │   │
-│   │   • Monaco Code Editor (Side-by-Side Diff & Inline Ghost Text)    │   │
-│   │   • Visual DAG Multi-Agent Workflow Canvas                        │   │
-│   │   • Real-Time Agent Console & 1,000+ Plugin Manager               │   │
-│   │   • AES-GCM Encrypted BYOK Settings Modal                         │   │
-│   └──────────────┬──────────────────────────────▲─────────────────────┘   │
-│                  │ Typed postMessage            │ Sandboxed Telemetry     │
-│                  ▼                              │                         │
-│   ┌─────────────────────────────────────────────┴─────────────────────┐   │
-│   │       ISOLATED IFRAME SANDBOX (public/sandbox-runner.html)        │   │
-│   │   • sandbox="allow-scripts" (Omits allow-same-origin)             │   │
-│   │   • Strict CSP: default-src 'none'                                │   │
-│   │   • 8-Second Execution Timeout & Auto-Recycle                     │   │
-│   └──────────────┬────────────────────────────────────────────────────┘   │
-│                  │                                                        │
-│                  │ Protected Proxy Call: POST /api/agent/run              │
-│                  ▼                                                        │
-│   ┌───────────────────────────────────────────────────────────────────┐   │
-│   │         BACKEND / PROXY LAYER (server.ts / Next.js Route)         │   │
-│   │   • Secure Server Environment (process.env.GEMINI_API_KEY)        │   │
-│   │   • Point-to-Point TLS Dispatch to AI Providers                   │   │
-│   └──────────────────────────────────────────────┬────────────────────┘   │
-│                                                  │                        │
-└──────────────────────────────────────────────────┼────────────────────────┘
-                                                   │ Direct TLS (No 3rd Party Proxy)
-                                                   ▼
-                                    ┌───────────────────────────────┐
-                                    │     DIRECT LLM PROVIDERS      │
-                                    │  • Google Gemini 2.5 / 3.x    │
-                                    │  • OpenAI (GPT-4o)            │
-                                    │  • Anthropic (Claude 3.7)     │
-                                    └───────────────────────────────┘
-```
-
----
-
-## ⚡ Feature Matrix
-
-| Feature | Architecture | Security Guarantee |
-| :--- | :--- | :--- |
-| **BYOK Security** | AES-256-GCM Vault | Zero plaintext keys in storage; direct client-to-server proxy. |
-| **Plugin Isolation** | Iframe (`allow-scripts`) | Zero same-origin access; guest scripts cannot inspect host DOM or cookies. |
-| **Multi-Agent DAG** | Topological Planner | Independent error isolation with `Promise.allSettled` and cascade skip handling. |
-| **Streaming Diff Previews** | Monaco Unified Engine | Side-by-side patch viewer with one-click Accept/Reject controls. |
-| **WASM Sandbox** | Extism / Wasmtime + Browser | Bounded linear memory pages (16MB–64MB) and instruction gas metering. |
-| **Desktop Shell** | Tauri 2.0 (Rust) | Native Windows (.msi) and Linux (.AppImage) packaging with minimal memory overhead. |
-
----
-
-## 🚀 Quickstart Installation Guide
-
-### 1. Clone Repository
-```bash
-git clone https://github.com/leverage-studios/leverage-studios.git
-cd leverage-studios
-```
-
-### 2. Install Dependencies
+### Local validation commands (developer)
 ```bash
 pnpm install
+pnpm lint        # Typecheck via tsc --noEmit
+GEMINI_API_KEY=yourkey pnpm dev
+# Test proxy config check
+curl -X POST http://localhost:3000/api/agent/run -H 'Content-Type: application/json' -d '{"action":"check_config"}'
 ```
 
-### 3. Run in Web Development Mode
-```bash
-pnpm dev
-```
-Open **[http://localhost:3000](http://localhost:3000)** in your browser.
-
-### 4. Run the Full Desktop Application (Tauri 2.0 + Rust Engine)
-```bash
-pnpm tauri dev
-```
-
-### 5. Configure Your API Key
-1. Click **Settings (⚙️)** in the top titlebar.
-2. Enter your **Google Gemini**, **OpenAI**, or **Anthropic** key.
-3. Click **Test Connection** to verify through `/api/agent/run`.
-4. Click **Save Settings** (encrypted via AES-256-GCM).
+### Developer FAQs (quick)
+- Q: Can I run the app without a server key? A: Yes for local testing, but features that call the server proxy will be limited. For full BYOK + generation, set `GEMINI_API_KEY` or implement authenticated BYOK.
+- Q: Why not store keys in localStorage? A: Plaintext storage is trivially exfiltrable by XSS or local malicious code. Use Web Crypto + OS keystore for desktop.
+- Q: What does the proxy return? A: The proxy attempts to return a structured `{ diffs: [{ filePath, modifiedContent }] }` array. Always validate before applying.
 
 ---
 
-## 📦 Building Production Release Binaries
+Please follow the checklist above before shipping a public release. If you'd like, I can open follow-up PRs to:
+- convert SettingsModal.test to use `check_config` when server keys are used,
+- replace the in-memory rate limiter with `express-rate-limit`,
+- add a basic Jest suite for server parsing and core agent flows.
 
-```bash
-# Builds optimized web assets and native Tauri installer packages
-pnpm tauri build
-```
-
-Generated bundles:
-- **Windows:** `src-tauri/target/release/bundle/msi/*.msi` and `.../nsis/*.exe`
-- **Linux:** `src-tauri/target/release/bundle/appimage/*.AppImage` and `.../deb/*.deb`
-
----
-
-## 📄 License
-
-Leverage Studios is open-source software licensed under the [Apache License 2.0](LICENSE).
